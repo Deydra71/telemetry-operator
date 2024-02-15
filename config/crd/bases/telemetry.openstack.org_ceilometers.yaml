@@ -63,8 +63,6 @@ spec:
                 items:
                   type: string
                 type: array
-              nodeExporterImage:
-                type: string
               notificationImage:
                 type: string
               passwordSelector:
@@ -105,11 +103,21 @@ spec:
                 type: string
               sgCoreImage:
                 type: string
+              tls:
+                description: TLS - Parameters related to the TLS
+                properties:
+                  caBundleSecretName:
+                    description: CaBundleSecretName - holding the CA certs in a pre-created
+                      bundle file
+                    type: string
+                  secretName:
+                    description: SecretName - holding the cert, key for the service
+                    type: string
+                type: object
             required:
             - centralImage
             - computeImage
             - ipmiImage
-            - nodeExporterImage
             - notificationImage
             - secret
             - sgCoreImage

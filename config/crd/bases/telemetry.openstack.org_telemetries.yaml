@@ -308,6 +308,36 @@ spec:
                         description: ServiceUser - optional username used for this
                           service to register in keystone
                         type: string
+                      tls:
+                        description: TLS - Parameters related to the TLS
+                        properties:
+                          api:
+                            description: API tls type which encapsulates for API services
+                            properties:
+                              internal:
+                                description: Internal GenericService - holds the secret
+                                  for the internal endpoint
+                                properties:
+                                  secretName:
+                                    description: SecretName - holding the cert, key
+                                      for the service
+                                    type: string
+                                type: object
+                              public:
+                                description: Public GenericService - holds the secret
+                                  for the public endpoint
+                                properties:
+                                  secretName:
+                                    description: SecretName - holding the cert, key
+                                      for the service
+                                    type: string
+                                type: object
+                            type: object
+                          caBundleSecretName:
+                            description: CaBundleSecretName - holding the CA certs
+                              in a pre-created bundle file
+                            type: string
+                        type: object
                     required:
                     - apiImage
                     - databaseInstance
@@ -374,8 +404,6 @@ spec:
                     items:
                       type: string
                     type: array
-                  nodeExporterImage:
-                    type: string
                   notificationImage:
                     type: string
                   passwordSelector:
@@ -416,11 +444,21 @@ spec:
                     type: string
                   sgCoreImage:
                     type: string
+                  tls:
+                    description: TLS - Parameters related to the TLS
+                    properties:
+                      caBundleSecretName:
+                        description: CaBundleSecretName - holding the CA certs in
+                          a pre-created bundle file
+                        type: string
+                      secretName:
+                        description: SecretName - holding the cert, key for the service
+                        type: string
+                    type: object
                 required:
                 - centralImage
                 - computeImage
                 - ipmiImage
-                - nodeExporterImage
                 - notificationImage
                 - secret
                 - sgCoreImage
@@ -728,8 +766,8 @@ spec:
                                       of compute resources required. If Requests is
                                       omitted for a container, it defaults to Limits
                                       if that is explicitly specified, otherwise to
-                                      an implementation-defined value. More info:
-                                      https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
+                                      an implementation-defined value. Requests cannot
+                                      exceed Limits. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
                                     type: object
                                 type: object
                               selector:
@@ -1480,7 +1518,7 @@ spec:
                               compute resources required. If Requests is omitted for
                               a container, it defaults to Limits if that is explicitly
                               specified, otherwise to an implementation-defined value.
-                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
+                              Requests cannot exceed Limits. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
                             type: object
                         type: object
                       retention:
@@ -1505,6 +1543,12 @@ spec:
                         default: true
                         description: AlertingEnabled allows to enable or disable alertmanager
                         type: boolean
+                      dataplaneNetwork:
+                        default: ctlplane
+                        description: DataplaneNetwork defines the network that will
+                          be used to scrape dataplane node_exporter endpoints
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9\-_]*[a-zA-Z0-9]$
+                        type: string
                       scrapeInterval:
                         default: 30s
                         description: ScrapeInterval sets the interval between scrapes
@@ -1593,6 +1637,8 @@ spec:
                             - persistent
                             type: string
                         type: object
+                    required:
+                    - dataplaneNetwork
                     type: object
                 type: object
             type: object

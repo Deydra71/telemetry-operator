@@ -27,16 +27,18 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8s_errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	logr "github.com/go-logr/logr"
 	common "github.com/openstack-k8s-operators/lib-common/modules/common"
@@ -56,7 +58,6 @@ import (
 	mariadbv1 "github.com/openstack-k8s-operators/mariadb-operator/api/v1beta1"
 	telemetryv1 "github.com/openstack-k8s-operators/telemetry-operator/api/v1beta1"
 	autoscaling "github.com/openstack-k8s-operators/telemetry-operator/pkg/autoscaling"
-	metricstorage "github.com/openstack-k8s-operators/telemetry-operator/pkg/metricstorage"
 )
 
 // AutoscalingReconciler reconciles a Autoscaling object
@@ -86,6 +87,9 @@ func (r *AutoscalingReconciler) GetLogger(ctx context.Context) logr.Logger {
 // +kubebuilder:rbac:groups=keystone.openstack.org,resources=keystoneendpoints,verbs=get;list;watch;create;update;patch;delete;
 // +kubebuilder:rbac:groups=rabbitmq.openstack.org,resources=transporturls,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mariadb.openstack.org,resources=mariadbdatabases,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=mariadb.openstack.org,resources=mariadbdatabases/finalizers,verbs=update
+// +kubebuilder:rbac:groups=mariadb.openstack.org,resources=mariadbaccounts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=mariadb.openstack.org,resources=mariadbaccounts/finalizers,verbs=update
 // +kubebuilder:rbac:groups=memcached.openstack.org,resources=memcacheds,verbs=get;list;watch;
 // +kubebuilder:rbac:groups=heat.openstack.org,resources=heats,verbs=get;list;watch;
 // service account, role, rolebinding
@@ -178,6 +182,7 @@ func (r *AutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			// right now we have no dedicated KeystoneServiceReadyInitMessage
 			condition.UnknownCondition(condition.KeystoneServiceReadyCondition, condition.InitReason, ""),
 			condition.UnknownCondition(condition.KeystoneEndpointReadyCondition, condition.InitReason, ""),
+			condition.UnknownCondition(condition.TLSInputReadyCondition, condition.InitReason, condition.InputReadyInitMessage),
 		)
 
 		instance.Status.Conditions.Init(&cl)
@@ -235,7 +240,6 @@ func (r *AutoscalingReconciler) reconcileInit(
 	}
 	Log.Info("Reconciled Service init successfully")
 	return ctrl.Result{}, nil
-
 }
 
 func (r *AutoscalingReconciler) reconcileNormal(
@@ -277,7 +281,6 @@ func (r *AutoscalingReconciler) reconcileNormal(
 	// create RabbitMQ transportURL CR and get the actual URL from the associated secret that is created
 	//
 	transportURL, op, err := r.transportURLCreateOrUpdate(instance)
-
 	if err != nil {
 		Log.Info("Error getting transportURL. Setting error condition on status and returning")
 		instance.Status.Conditions.Set(condition.FalseCondition(
@@ -403,12 +406,12 @@ func (r *AutoscalingReconciler) reconcileNormal(
 	// NOTE: Always do this before calling the generateServiceConfig to get the newest values in the ServiceConfig
 	//
 	if instance.Spec.PrometheusHost == "" {
-		instance.Status.PrometheusHost = fmt.Sprintf("%s-prometheus.%s.svc", metricstorage.DefaultServiceName, instance.Namespace)
+		instance.Status.PrometheusHost = fmt.Sprintf("%s-prometheus.%s.svc", telemetryv1.DefaultServiceName, instance.Namespace)
 	} else {
 		instance.Status.PrometheusHost = instance.Spec.PrometheusHost
 	}
 	if instance.Spec.PrometheusPort == 0 {
-		instance.Status.PrometheusPort = metricstorage.DefaultPrometheusPort
+		instance.Status.PrometheusPort = telemetryv1.DefaultPrometheusPort
 	} else {
 		instance.Status.PrometheusPort = instance.Spec.PrometheusPort
 	}
@@ -496,7 +499,6 @@ func (r *AutoscalingReconciler) generateServiceConfig(
 	envVars *map[string]env.Setter,
 	mc *memcachedv1.Memcached,
 ) error {
-
 	cmLabels := labels.GetLabels(instance, labels.GetGroupLabel(autoscaling.ServiceName), map[string]string{})
 	customData := map[string]string{common.CustomServiceConfigFileName: instance.Spec.Aodh.CustomServiceConfig}
 	for key, data := range instance.Spec.Aodh.DefaultConfigOverwrite {
@@ -659,7 +661,7 @@ func (r *AutoscalingReconciler) SetupWithManager(ctx context.Context, mgr ctrl.M
 	//
 	// TODO: We also need a watch func to monitor for changes to the secret referenced by Autoscaling.Spec.Secret
 	Log := r.GetLogger(ctx)
-	transportURLSecretFn := func(o client.Object) []reconcile.Request {
+	transportURLSecretFn := func(ctx context.Context, o client.Object) []reconcile.Request {
 		result := []reconcile.Request{}
 
 		// get all Autoscaling CRs
@@ -692,7 +694,7 @@ func (r *AutoscalingReconciler) SetupWithManager(ctx context.Context, mgr ctrl.M
 		}
 		return nil
 	}
-	memcachedFn := func(o client.Object) []reconcile.Request {
+	memcachedFn := func(ctx context.Context, o client.Object) []reconcile.Request {
 		result := []reconcile.Request{}
 
 		// get all autoscaling CRs
@@ -720,6 +722,42 @@ func (r *AutoscalingReconciler) SetupWithManager(ctx context.Context, mgr ctrl.M
 		}
 		return nil
 	}
+	// index caBundleSecretNameField
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &telemetryv1.Autoscaling{}, caBundleSecretNameField, func(rawObj client.Object) []string {
+		// Extract the secret name from the spec, if one is provided
+		cr := rawObj.(*telemetryv1.Autoscaling)
+		if cr.Spec.Aodh.TLS.CaBundleSecretName == "" {
+			return nil
+		}
+		return []string{cr.Spec.Aodh.TLS.CaBundleSecretName}
+	}); err != nil {
+		return err
+	}
+
+	// index tlsAPIInternalField
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &telemetryv1.Autoscaling{}, tlsAPIInternalField, func(rawObj client.Object) []string {
+		// Extract the secret name from the spec, if one is provided
+		cr := rawObj.(*telemetryv1.Autoscaling)
+		if cr.Spec.Aodh.TLS.API.Internal.SecretName == nil {
+			return nil
+		}
+		return []string{*cr.Spec.Aodh.TLS.API.Internal.SecretName}
+	}); err != nil {
+		return err
+	}
+
+	// index tlsAPIPublicField
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &telemetryv1.Autoscaling{}, tlsAPIPublicField, func(rawObj client.Object) []string {
+		// Extract the secret name from the spec, if one is provided
+		cr := rawObj.(*telemetryv1.Autoscaling)
+		if cr.Spec.Aodh.TLS.API.Public.SecretName == nil {
+			return nil
+		}
+		return []string{*cr.Spec.Aodh.TLS.API.Public.SecretName}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&telemetryv1.Autoscaling{}).
 		Owns(&appsv1.StatefulSet{}).
@@ -730,13 +768,52 @@ func (r *AutoscalingReconciler) SetupWithManager(ctx context.Context, mgr ctrl.M
 		Owns(&keystonev1.KeystoneService{}).
 		Owns(&keystonev1.KeystoneEndpoint{}).
 		Owns(&mariadbv1.MariaDBDatabase{}).
+		Owns(&mariadbv1.MariaDBAccount{}).
 		Owns(&rabbitmqv1.TransportURL{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
 		// Watch for TransportURL Secrets which belong to any TransportURLs created by Autoscaling CRs
-		Watches(&source.Kind{Type: &corev1.Secret{}},
+		Watches(&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(transportURLSecretFn)).
-		Watches(&source.Kind{Type: &memcachedv1.Memcached{}},
+		Watches(&memcachedv1.Memcached{},
 			handler.EnqueueRequestsFromMapFunc(memcachedFn)).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.findObjectsForSrc),
+			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+		).
 		Complete(r)
+}
+
+func (r *AutoscalingReconciler) findObjectsForSrc(ctx context.Context, src client.Object) []reconcile.Request {
+	requests := []reconcile.Request{}
+
+	l := log.FromContext(context.Background()).WithName("Controllers").WithName("Autoscaling")
+
+	for _, field := range allWatchFields {
+		crList := &telemetryv1.AutoscalingList{}
+		listOps := &client.ListOptions{
+			FieldSelector: fields.OneTermEqualSelector(field, src.GetName()),
+			Namespace:     src.GetNamespace(),
+		}
+		err := r.Client.List(context.TODO(), crList, listOps)
+		if err != nil {
+			return []reconcile.Request{}
+		}
+
+		for _, item := range crList.Items {
+			l.Info(fmt.Sprintf("input source %s changed, reconcile: %s - %s", src.GetName(), item.GetName(), item.GetNamespace()))
+
+			requests = append(requests,
+				reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      item.GetName(),
+						Namespace: item.GetNamespace(),
+					},
+				},
+			)
+		}
+	}
+
+	return requests
 }

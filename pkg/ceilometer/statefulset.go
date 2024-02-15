@@ -69,6 +69,27 @@ func StatefulSet(
 		Port: intstr.IntOrString{Type: intstr.Int, IntVal: int32(CeilometerPrometheusPort)},
 	}
 
+	// create Volumes and VolumeMounts
+	volumes := getVolumes(ServiceName)
+	volumeMounts := getVolumeMounts("ceilometer-central")
+
+	// add CA cert if defined
+	if instance.Spec.TLS.CaBundleSecretName != "" {
+		volumes = append(volumes, instance.Spec.TLS.CreateVolume())
+		volumeMounts = append(volumeMounts, instance.Spec.TLS.CreateVolumeMounts(nil)...)
+	}
+
+	if instance.Spec.TLS.Enabled() {
+		svc, err := instance.Spec.TLS.GenericService.ToService()
+		if err != nil {
+			return nil, err
+		}
+		livenessProbe.HTTPGet.Scheme = corev1.URISchemeHTTPS
+		readinessProbe.HTTPGet.Scheme = corev1.URISchemeHTTPS
+		volumes = append(volumes, svc.CreateVolume(ServiceName))
+		volumeMounts = append(volumeMounts, svc.CreateVolumeMounts(ServiceName)...)
+	}
+
 	envVarsCentral := map[string]env.Setter{}
 	envVarsCentral["KOLLA_CONFIG_STRATEGY"] = env.SetValue("COPY_ALWAYS")
 	envVarsCentral["CONFIG_HASH"] = env.SetValue(configHash)
@@ -91,7 +112,7 @@ func StatefulSet(
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser: &runAsUser,
 		},
-		VolumeMounts: getVolumeMounts("ceilometer-central"),
+		VolumeMounts: volumeMounts,
 	}
 	notificationAgentContainer := corev1.Container{
 		ImagePullPolicy: corev1.PullAlways,
@@ -150,7 +171,7 @@ func StatefulSet(
 		},
 	}
 
-	statefulset.Spec.Template.Spec.Volumes = getVolumes(ServiceName)
+	statefulset.Spec.Template.Spec.Volumes = volumes
 
 	// networks to attach to
 	nwAnnotation, err := annotations.GetNADAnnotation(instance.Namespace, instance.Spec.NetworkAttachmentDefinitions)

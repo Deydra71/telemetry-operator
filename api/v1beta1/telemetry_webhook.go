@@ -24,6 +24,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // TelemetryDefaults -
@@ -32,7 +33,6 @@ type TelemetryDefaults struct {
 	ComputeContainerImageURL       string
 	NotificationContainerImageURL  string
 	SgCoreContainerImageURL        string
-	NodeExporterContainerImageURL  string
 	IpmiContainerImageURL          string
 	AodhAPIContainerImageURL       string
 	AodhEvaluatorContainerImageURL string
@@ -87,9 +87,6 @@ func (spec *TelemetrySpec) Default() {
 	if spec.Ceilometer.CeilometerSpec.SgCoreImage == "" {
 		spec.Ceilometer.CeilometerSpec.SgCoreImage = telemetryDefaults.SgCoreContainerImageURL
 	}
-	if spec.Ceilometer.CeilometerSpec.NodeExporterImage == "" {
-		spec.Ceilometer.CeilometerSpec.NodeExporterImage = telemetryDefaults.NodeExporterContainerImageURL
-	}
 	if spec.Autoscaling.AutoscalingSpec.Aodh.APIImage == "" {
 		spec.Autoscaling.AutoscalingSpec.Aodh.APIImage = telemetryDefaults.AodhAPIContainerImageURL
 	}
@@ -102,7 +99,6 @@ func (spec *TelemetrySpec) Default() {
 	if spec.Autoscaling.AutoscalingSpec.Aodh.ListenerImage == "" {
 		spec.Autoscaling.AutoscalingSpec.Aodh.ListenerImage = telemetryDefaults.AodhListenerContainerImageURL
 	}
-
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
@@ -111,25 +107,25 @@ func (spec *TelemetrySpec) Default() {
 var _ webhook.Validator = &Telemetry{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (r *Telemetry) ValidateCreate() error {
+func (r *Telemetry) ValidateCreate() (admission.Warnings, error) {
 	telemetrylog.Info("validate create", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object creation.
-	return nil
+	return nil, nil
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (r *Telemetry) ValidateUpdate(old runtime.Object) error {
+func (r *Telemetry) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	telemetrylog.Info("validate update", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object update.
-	return nil
+	return nil, nil
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (r *Telemetry) ValidateDelete() error {
+func (r *Telemetry) ValidateDelete() (admission.Warnings, error) {
 	telemetrylog.Info("validate delete", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object deletion.
-	return nil
+	return nil, nil
 }
