@@ -2,94 +2,6 @@ apiVersion: v1
 kind: Pod
 metadata:
   labels:
-    service: ceilometer
-  name: ceilometer-0
-  ownerReferences:
-  - kind: StatefulSet
-    name: ceilometer
-spec:
-  containers:
-  - args:
-    - -c
-    - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-    command:
-    - /bin/bash
-    name: ceilometer-central-agent
-  - args:
-    - -c
-    - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-    command:
-    - /bin/bash
-    name: ceilometer-notification-agent
-  - name: sg-core
-  hostname: ceilometer-0
-status:
-  containerStatuses:
-  - name: ceilometer-central-agent
-    ready: true
-    started: true
-  - name: ceilometer-notification-agent
-    ready: true
-    started: true
-  - name: sg-core
-    ready: true
-    started: true
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  labels:
-    service: ceilometer
-  name: ceilometer
-  ownerReferences:
-  - kind: Ceilometer
-    name: telemetry-kuttl
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      service: ceilometer
-  template:
-    spec:
-      containers:
-      - args:
-        - -c
-        - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-        command:
-        - /bin/bash
-        name: ceilometer-central-agent
-      - args:
-        - -c
-        - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-        command:
-        - /bin/bash
-        name: ceilometer-notification-agent
-      - name: sg-core
-status:
-  availableReplicas: 1
-  currentReplicas: 1
-  readyReplicas: 1
-  replicas: 1
----
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    service: ceilometer
-  name: ceilometer
-  ownerReferences:
-  - kind: Ceilometer
-    name: telemetry-kuttl
-spec:
-  ports:
-  - port: 3000
-    protocol: TCP
-    targetPort: 3000
----
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
     service: aodh
   name: aodh-0
   ownerReferences:
@@ -97,92 +9,63 @@ metadata:
     name: aodh
 spec:
   containers:
-  - args:
-    - -c
-    - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-    command:
-    - /bin/bash
-    name: aodh-api
-  - args:
-    - -c
-    - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-    command:
-    - /bin/bash
-    name: aodh-evaluator
-  - args:
-    - -c
-    - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-    command:
-    - /bin/bash
-    name: aodh-notifier
-  - args:
-    - -c
-    - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-    command:
-    - /bin/bash
-    name: aodh-listener
-  hostname: aodh-0
-status:
-  containerStatuses:
-  - name: aodh-api
-    ready: true
-    started: true
-  - name: aodh-evaluator
-    ready: true
-    started: true
-  - name: aodh-listener
-    ready: true
-    started: true
-  - name: aodh-notifier
-    ready: true
-    started: true
----
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  labels:
-    service: aodh
-  name: aodh
-  ownerReferences:
-  - kind: Autoscaling
-    name: telemetry-kuttl
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      service: aodh
-  template:
-    spec:
-      containers:
-      - args:
+    - name: aodh-api
+      command:
+        - /bin/bash
+      args:
         - -c
         - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-        command:
+      volumeMounts:
+        - mountPath: /var/lib/openstack/bin
+          name: scripts
+          readOnly: true
+        - mountPath: /var/lib/openstack/config
+          name: config-data
+          readOnly: true
+        - mountPath: /var/lib/kolla/config_files/config.json
+          name: config-data
+          readOnly: true
+          subPath: aodh-api-config.json
+        - mountPath: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+          name: combined-ca-bundle
+          readOnly: true
+          subPath: tls-ca-bundle.pem
+        - mountPath: /var/lib/config-data/tls/certs/internal.crt
+          name: internal-tls-certs
+          readOnly: true
+          subPath: tls.crt
+        - mountPath: /var/lib/config-data/tls/private/internal.key
+          name: internal-tls-certs
+          readOnly: true
+          subPath: tls.key
+        - mountPath: /var/lib/config-data/tls/certs/public.crt
+          name: public-tls-certs
+          readOnly: true
+          subPath: tls.crt
+        - mountPath: /var/lib/config-data/tls/private/public.key
+          name: public-tls-certs
+          readOnly: true
+          subPath: tls.key
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+    - name: aodh-evaluator
+      command:
         - /bin/bash
-        name: aodh-api
-      - args:
+      args:
         - -c
         - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-        command:
+    - name: aodh-notifier
+      command:
         - /bin/bash
-        name: aodh-evaluator
-      - args:
+      args:
         - -c
         - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-        command:
+    - name: aodh-listener
+      command:
         - /bin/bash
-        name: aodh-notifier
-      - args:
+      args:
         - -c
         - /usr/local/bin/kolla_set_configs && /usr/local/bin/kolla_start
-        command:
-        - /bin/bash
-        name: aodh-listener
-status:
-  availableReplicas: 1
-  currentReplicas: 1
-  readyReplicas: 1
-  replicas: 1
 ---
 apiVersion: v1
 kind: Service

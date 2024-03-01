@@ -1,14 +1,16 @@
 apiVersion: telemetry.openstack.org/v1beta1
 kind: Autoscaling
 metadata:
-  name: telemetry-kuttl
+  labels:
+    app.kubernetes.io/name: autoscaling
+    app.kubernetes.io/instance: autoscaling-sample
+    app.kubernetes.io/part-of: telemetry-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: telemetry-operator
+  name: autoscaling
 spec:
   aodh:
     secret: osp-secret
-    apiImage: "quay.io/mmagr/openstack-aodh-api:current-podified"
-    evaluatorImage: "quay.io/mmagr/openstack-aodh-evaluator:current-podified"
-    notifierImage: "quay.io/mmagr/openstack-aodh-notifier:current-podified"
-    listenerImage: "quay.io/mmagr/openstack-aodh-listener:current-podified"
     passwordSelectors:
     databaseUser: aodh
     databaseInstance: openstack
@@ -20,4 +22,3 @@ spec:
         public:
           secretName: cert-aodh-public-svc
       caBundleSecretName: combined-ca-bundle
-  heatInstance: heat

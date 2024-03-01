@@ -26,17 +26,13 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	k8s_errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	logr "github.com/go-logr/logr"
@@ -49,7 +45,6 @@ import (
 	common_rbac "github.com/openstack-k8s-operators/lib-common/modules/common/rbac"
 	secret "github.com/openstack-k8s-operators/lib-common/modules/common/secret"
 	statefulset "github.com/openstack-k8s-operators/lib-common/modules/common/statefulset"
-	"github.com/openstack-k8s-operators/lib-common/modules/common/tls"
 	util "github.com/openstack-k8s-operators/lib-common/modules/common/util"
 
 	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
@@ -159,7 +154,6 @@ func (r *CeilometerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			condition.UnknownCondition(condition.RoleBindingReadyCondition, condition.InitReason, condition.RoleBindingReadyInitMessage),
 			// right now we have no dedicated KeystoneServiceReadyInitMessage
 			condition.UnknownCondition(condition.KeystoneServiceReadyCondition, condition.InitReason, ""),
-			condition.UnknownCondition(condition.TLSInputReadyCondition, condition.InitReason, condition.InputReadyInitMessage),
 		)
 
 		instance.Status.Conditions.Init(&cl)
@@ -180,25 +174,6 @@ func (r *CeilometerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Handle non-deleted clusters
 	return r.reconcileNormal(ctx, instance, helper)
 }
-
-// fields to index to reconcile when change
-const (
-	passwordSecretField     = ".spec.secret"
-	caBundleSecretNameField = ".spec.tls.caBundleSecretName"
-	tlsAPIInternalField     = ".spec.tls.api.internal.secretName"
-	tlsAPIPublicField       = ".spec.tls.api.public.secretName"
-	tlsField                = ".spec.tls.secretName"
-)
-
-var (
-	allWatchFields = []string{
-		passwordSecretField,
-		caBundleSecretNameField,
-		tlsAPIInternalField,
-		tlsAPIPublicField,
-		tlsField,
-	}
-)
 
 func (r *CeilometerReconciler) reconcileDelete(ctx context.Context, instance *telemetryv1.Ceilometer, helper *helper.Helper) (ctrl.Result, error) {
 	Log := r.GetLogger(ctx)
@@ -365,55 +340,6 @@ func (r *CeilometerReconciler) reconcileNormal(ctx context.Context, instance *te
 	instance.Status.Conditions.MarkTrue(condition.InputReadyCondition, condition.InputReadyMessage)
 
 	//
-	// TLS input validation
-	//
-	// Validate the CA cert secret if provided
-	if instance.Spec.TLS.CaBundleSecretName != "" {
-		hash, ctrlResult, err := tls.ValidateCACertSecret(
-			ctx,
-			helper.GetClient(),
-			types.NamespacedName{
-				Name:      instance.Spec.TLS.CaBundleSecretName,
-				Namespace: instance.Namespace,
-			},
-		)
-		if err != nil {
-			instance.Status.Conditions.Set(condition.FalseCondition(
-				condition.TLSInputReadyCondition,
-				condition.ErrorReason,
-				condition.SeverityWarning,
-				condition.TLSInputErrorMessage,
-				err.Error()))
-			return ctrlResult, err
-		} else if (ctrlResult != ctrl.Result{}) {
-			return ctrlResult, nil
-		}
-
-		if hash != "" {
-			configMapVars[tls.CABundleKey] = env.SetValue(hash)
-		}
-	}
-
-	// Validate metadata service cert secret
-	if instance.Spec.TLS.Enabled() {
-		hash, ctrlResult, err := instance.Spec.TLS.ValidateCertSecret(ctx, helper, instance.Namespace)
-		if err != nil {
-			instance.Status.Conditions.Set(condition.FalseCondition(
-				condition.TLSInputReadyCondition,
-				condition.ErrorReason,
-				condition.SeverityWarning,
-				condition.TLSInputErrorMessage,
-				err.Error()))
-			return ctrl.Result{}, err
-		} else if (ctrlResult != ctrl.Result{}) {
-			return ctrlResult, nil
-		}
-		configMapVars[tls.TLSHashName] = env.SetValue(hash)
-	}
-	// all cert input checks out so report InputReady
-	instance.Status.Conditions.MarkTrue(condition.TLSInputReadyCondition, condition.InputReadyMessage)
-
-	//
 	// create Configmap required for ceilometer input
 	// - %-scripts configmap holding scripts to e.g. bootstrap the service
 	// - %-config configmap holding minimal ceilometer config required to get the service up, user can add additional files to be added to the service
@@ -471,8 +397,7 @@ func (r *CeilometerReconciler) reconcileNormal(ctx context.Context, instance *te
 	instance.Status.Conditions.MarkTrue(condition.ServiceConfigReadyCondition, condition.ServiceConfigReadyMessage)
 
 	serviceLabels := map[string]string{
-		common.AppSelector:   ceilometer.ServiceName,
-		common.OwnerSelector: instance.Name,
+		common.AppSelector: ceilometer.ServiceName,
 	}
 
 	// Handle service init
@@ -588,14 +513,6 @@ func (r *CeilometerReconciler) generateServiceConfig(
 		"KeystoneInternalURL": keystoneInternalURL,
 		"TransportURL":        string(transportURLSecret.Data["transport_url"]),
 		"CeilometerPassword":  string(ceilometerPasswordSecret.Data["CeilometerPassword"]),
-		"TLS":                 false,
-	}
-
-	// create httpd tls template parameters
-	if instance.Spec.TLS.Enabled() {
-		templateParameters["TLS"] = true
-		templateParameters["SSLCertificateFile"] = fmt.Sprintf("/etc/pki/tls/certs/%s.crt", ceilometer.ServiceName)
-		templateParameters["SSLCertificateKeyFile"] = fmt.Sprintf("/etc/pki/tls/private/%s.key", ceilometer.ServiceName)
 	}
 
 	cms := []util.Template{
@@ -648,11 +565,11 @@ func (r *CeilometerReconciler) generateComputeServiceConfig(
 	ceilometerPasswordSecret, _, _ := secret.GetSecret(ctx, h, instance.Spec.Secret, instance.Namespace)
 
 	templateParameters := map[string]interface{}{
-		"KeystoneInternalURL":           keystoneInternalURL,
-		"TransportURL":                  string(transportURLSecret.Data["transport_url"]),
-		"CeilometerPassword":            string(ceilometerPasswordSecret.Data["CeilometerPassword"]),
-		"ceilometer_compute_image":      instance.Spec.ComputeImage,
-		"ceilometer_ipmi_image":         instance.Spec.IpmiImage,
+		"KeystoneInternalURL":      keystoneInternalURL,
+		"TransportURL":             string(transportURLSecret.Data["transport_url"]),
+		"CeilometerPassword":       string(ceilometerPasswordSecret.Data["CeilometerPassword"]),
+		"ceilometer_compute_image": instance.Spec.ComputeImage,
+		"ceilometer_ipmi_image":    instance.Spec.IpmiImage,
 	}
 
 	cms := []util.Template{
@@ -766,42 +683,6 @@ func (r *CeilometerReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Ma
 		return nil
 	}
 
-	// index passwordSecretField
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &telemetryv1.Ceilometer{}, passwordSecretField, func(rawObj client.Object) []string {
-		// Extract the secret name from the spec, if one is provided
-		cr := rawObj.(*telemetryv1.Ceilometer)
-		if cr.Spec.Secret == "" {
-			return nil
-		}
-		return []string{cr.Spec.Secret}
-	}); err != nil {
-		return err
-	}
-
-	// index caBundleSecretNameField
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &telemetryv1.Ceilometer{}, caBundleSecretNameField, func(rawObj client.Object) []string {
-		// Extract the secret name from the spec, if one is provided
-		cr := rawObj.(*telemetryv1.Ceilometer)
-		if cr.Spec.TLS.CaBundleSecretName == "" {
-			return nil
-		}
-		return []string{cr.Spec.TLS.CaBundleSecretName}
-	}); err != nil {
-		return err
-	}
-
-	// index tlsAPIInternalField
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &telemetryv1.Ceilometer{}, tlsField, func(rawObj client.Object) []string {
-		// Extract the secret name from the spec, if one is provided
-		cr := rawObj.(*telemetryv1.Ceilometer)
-		if cr.Spec.TLS.SecretName == nil {
-			return nil
-		}
-		return []string{*cr.Spec.TLS.SecretName}
-	}); err != nil {
-		return err
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&telemetryv1.Ceilometer{}).
 		Owns(&keystonev1.KeystoneService{}).
@@ -815,43 +696,5 @@ func (r *CeilometerReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Ma
 		// Watch for TransportURL Secrets which belong to any TransportURLs created by Ceilometer CRs
 		Watches(&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(transportURLSecretFn)).
-		Watches(
-			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.findObjectsForSrc),
-			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
-		).
 		Complete(r)
-}
-
-func (r *CeilometerReconciler) findObjectsForSrc(ctx context.Context, src client.Object) []reconcile.Request {
-	requests := []reconcile.Request{}
-
-	l := log.FromContext(context.Background()).WithName("Controllers").WithName("Ceilometer")
-
-	for _, field := range allWatchFields {
-		crList := &telemetryv1.CeilometerList{}
-		listOps := &client.ListOptions{
-			FieldSelector: fields.OneTermEqualSelector(field, src.GetName()),
-			Namespace:     src.GetNamespace(),
-		}
-		err := r.Client.List(context.TODO(), crList, listOps)
-		if err != nil {
-			return []reconcile.Request{}
-		}
-
-		for _, item := range crList.Items {
-			l.Info(fmt.Sprintf("input source %s changed, reconcile: %s - %s", src.GetName(), item.GetName(), item.GetNamespace()))
-
-			requests = append(requests,
-				reconcile.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      item.GetName(),
-						Namespace: item.GetNamespace(),
-					},
-				},
-			)
-		}
-	}
-
-	return requests
 }

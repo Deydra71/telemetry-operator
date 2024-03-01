@@ -12,8 +12,3 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: combined-ca-bundle
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: cert-ceilometer-svc

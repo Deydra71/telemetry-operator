@@ -204,6 +204,25 @@ func (r *AutoscalingReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return r.reconcileNormal(ctx, instance, helper)
 }
 
+// fields to index to reconcile when change
+const (
+	passwordSecretField     = ".spec.secret"
+	caBundleSecretNameField = ".spec.tls.caBundleSecretName"
+	tlsAPIInternalField     = ".spec.tls.api.internal.secretName"
+	tlsAPIPublicField       = ".spec.tls.api.public.secretName"
+	tlsField                = ".spec.tls.secretName"
+)
+
+var (
+	allWatchFields = []string{
+		passwordSecretField,
+		caBundleSecretNameField,
+		tlsAPIInternalField,
+		tlsAPIPublicField,
+		tlsField,
+	}
+)
+
 func (r *AutoscalingReconciler) reconcileDelete(
 	ctx context.Context,
 	instance *telemetryv1.Autoscaling,
